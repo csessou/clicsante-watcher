@@ -1,0 +1,34 @@
+name: Check Lachine blood-test appointments
+
+on:
+  schedule:
+    # Every ten minutes, offset from the top of the hour to reduce delays.
+    # GitHub Actions schedules are best-effort and can run late or be skipped.
+    - cron: "7,17,27,37,47,57 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: clicsante-lachine-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      # Ubuntu runners already have python3 installed; skip setup to save time.
+      - name: Check publicly listed appointment dates
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WATCH_START: "2026-10-12"
+          WATCH_END: "2026-10-26"
+        run: python3 check.py
