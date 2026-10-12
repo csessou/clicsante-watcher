@@ -3,9 +3,9 @@
 
 const API = 'https://api3.clicsante.ca/v3/establishments/8090/schedules/public';
 const BOOKING_URL = 'https://clients3.clicsante.ca/8090/take-appt?portalPlace=20176&portalPostalCode=H8P%202S1&lang=fr&portalServicesUnified=11,353&portalEst=381644';
-const START = '2026-10-12';
-const END = '2026-10-31';
-const KEY = 'lachine-available-dates-v1';
+const START = '2026-11-05';
+const END = '2026-11-19';
+const KEY = 'lachine-available-dates-nov5-19-v1';
 
 function montrealDate() {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -25,7 +25,7 @@ async function checkAppointments(env) {
     return;
   }
   const query = new URLSearchParams({
-    dateStart: '2026-10-01', dateStop: '2026-11-01',
+    dateStart: '2026-11-01', dateStop: '2026-12-01',
     service: '381644', timezone: 'America/Toronto', places: '20176',
     filter1: '0', gapMode: 'false'
   });
