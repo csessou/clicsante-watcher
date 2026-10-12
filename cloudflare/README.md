@@ -5,7 +5,7 @@
 3. Create a KV namespace in **Storage & databases > KV**. Name it `lachine-watch-state`.
 4. In the Worker's **Settings > Bindings**, add a KV namespace binding named exactly `STATE` pointing to that namespace, then deploy.
 5. In **Settings > Variables and Secrets**, add secret **`NTFY_TOPIC`** with your existing ntfy topic name, then deploy. Do not add the topic to public code.
-6. Add **Settings > Triggers > Cron Triggers**: `*/10 * * * *`. Save. Cron propagation can take up to 15 minutes.
+6. Add **Settings > Triggers > Cron Triggers**: `* * * * *`. Save. Cron propagation can take up to 15 minutes.
 7. Check **Observability > Logs** for scheduled invocations and `Checked public calendar`. Open the Worker website only to confirm deployment; it does not trigger a check.
 8. After Cloudflare scheduled checks work, disable the old GitHub Actions workflow to avoid duplicate monitoring.
 
