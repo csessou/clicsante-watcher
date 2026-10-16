@@ -5,7 +5,7 @@ const API = 'https://api3.clicsante.ca/v3/establishments/8090/schedules/public';
 const BOOKING_URL = 'https://clients3.clicsante.ca/8090/take-appt?portalPlace=20176&portalPostalCode=H8P%202S1&lang=fr&portalServicesUnified=11,353&portalEst=381644';
 const START = '2026-11-05';
 const END = '2026-11-19';
-const KEY = 'lachine-available-dates-nov5-19-v1';
+const KEY = 'lachine-availability-state-nov5-19-v2';
 
 function montrealDate() {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -49,34 +49,82 @@ async function checkAppointments(env) {
     typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) &&
     d >= START && d <= END && d >= today
   ))].sort();
+  // Keep monitoring even if the push provider is down. Remember both
+  // observed dates and successful alerts. Avoid a write on every check.
   const previous = await env.STATE.get(KEY, { type: 'json' });
-  if (previous !== null && !Array.isArray(previous)) {
-    throw new Error('Stored state is invalid');
-  }
-  const oldDates = previous ?? [];
-  const newlyAvailable = dates.filter((d) => !oldDates.includes(d));
-
-  if (newlyAvailable.length) {
-    const notify = await fetch('https://ntfy.sh/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        topic: env.NTFY_TOPIC,
-        title: 'Clic Sante Lachine: dates available',
-        message: `New date(s): ${newlyAvailable.join(', ')}. Times not verified; check quickly for 6:00-8:30 or after 17:30.`,
-        click: BOOKING_URL,
-        priority: 5
-      })
-    });
-    if (!notify.ok) throw new Error(`ntfy HTTP ${notify.status}`);
-    console.log(`ntfy alert sent for: ${newlyAvailable.join(', ')}`);
+  if (previous !== null && (
+    !Array.isArray(previous.observedDates) ||
+    !Array.isArray(previous.notifiedDates)
+  )) {
+    throw new Error('Unexpected KV state');
   }
 
-  // Changes are saved only after alerts succeed, so failed alerts get retried.
-  if (previous === null || JSON.stringify(oldDates) !== JSON.stringify(dates)) {
-    await env.STATE.put(KEY, JSON.stringify(dates));
+  let notified = (previous?.notifiedDates ?? []).filter((day) => dates.includes(day));
+  let retryAfterMs = previous?.retryAfterMs ?? 0;
+  let failures = previous?.failedNotifications ?? 0;
+  const pending = dates.filter((day) => !notified.includes(day));
+
+  // Log availability BEFORE sending. This still appears if ntfy fails.
+  console.log(`Checked public calendar: ${dates.join(', ') || 'none'}; awaiting notification: ${pending.join(', ') || 'none'}`);
+
+  let notificationError = null;
+  if (pending.length && Date.now() >= retryAfterMs) {
+    let providerRetryMs = 0;
+    try {
+      const notify = await fetch('https://ntfy.sh/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          topic: env.NTFY_TOPIC,
+          title: 'Clic Sante Lachine: dates available',
+          message: `New date(s): ${pending.join(', ')}. Times not verified; check quickly for 6:00-8:30 or after 17:30.`,
+          click: BOOKING_URL,
+          priority: 5
+        })
+      });
+      if (!notify.ok) {
+        // Respect provider rate-limit retry instructions if supplied.
+        if (notify.status === 429) {
+          const retry = notify.headers.get('Retry-After');
+          const seconds = Number(retry);
+          if (retry && Number.isFinite(seconds) && seconds > 0) {
+            providerRetryMs = Math.min(seconds * 1000, 24 * 60 * 60 * 1000);
+          }
+        }
+        throw new Error(`ntfy HTTP ${notify.status}`);
+      }
+      notified = dates;
+      failures = 0;
+      retryAfterMs = 0;
+      console.log(`ntfy alert delivered to service for: ${pending.join(', ')}`);
+    } catch (error) {
+      failures += 1;
+      // Back off 1, 2, 4, 8, 15 minutes; keep checking Clic Sante.
+      const exponentialMs = Math.min(15 * 60 * 1000, (2 ** Math.min(failures - 1, 4)) * 60 * 1000);
+      retryAfterMs = Date.now() + Math.max(exponentialMs, providerRetryMs);
+      notificationError = error;
+      console.error(`Notification failed for ${pending.join(', ')}: ${error.message}. Next attempt after ${new Date(retryAfterMs).toISOString()}`);
+    }
+  } else if (pending.length) {
+    console.warn(`Still available: ${pending.join(', ')}; ntfy retry paused until ${new Date(retryAfterMs).toISOString()}`);
   }
-  console.log(`Checked public calendar: ${dates.join(', ') || 'none'}; newly available: ${newlyAvailable.join(', ') || 'none'}`);
+
+  // If dates vanish, they are removed from notified so reappearance alerts again.
+  if (!pending.length) {
+    failures = 0;
+    retryAfterMs = 0;
+  }
+  const nextState = {
+    observedDates: dates,
+    notifiedDates: notified.sort(),
+    retryAfterMs,
+    failedNotifications: failures
+  };
+  if (JSON.stringify(previous) !== JSON.stringify(nextState)) {
+    await env.STATE.put(KEY, JSON.stringify(nextState));
+  }
+  // Mark this particular run as failed after state is preserved.
+  if (notificationError) throw notificationError;
 }
 
 export default {
